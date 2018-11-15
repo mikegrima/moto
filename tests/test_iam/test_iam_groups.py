@@ -1,10 +1,12 @@
 from __future__ import unicode_literals
 
+import json
 from datetime import datetime
 
 import boto
 import boto3
 import sure  # noqa
+from botocore.exceptions import ClientError
 
 from nose.tools import assert_raises
 from boto.exception import BotoServerError
@@ -153,3 +155,104 @@ def test_list_group_policies():
     conn.list_group_policies(GroupName='my-group')['PolicyNames'].should.be.empty
     conn.put_group_policy(GroupName='my-group', PolicyName='my-policy', PolicyDocument='{"some": "json"}')
     conn.list_group_policies(GroupName='my-group')['PolicyNames'].should.equal(['my-policy'])
+
+
+@mock_iam()
+def test_delete_group_policy():
+    conn = boto3.client('iam', region_name='us-east-1')
+    conn.create_group(Path='/', GroupName='testGroup')
+    conn.put_group_policy(GroupName='testGroup',
+                          PolicyName='testInlinePolicy',
+                          PolicyDocument=json.dumps({
+                              "Version": "2012-10-17",
+                              "Statement": [
+                                  {
+                                      "Action": "s3:ListBucket",
+                                      "Resource": "*",
+                                      "Effect": "Allow",
+                                  }
+                              ]
+                          }))
+
+    assert conn.get_group_policy(GroupName='testGroup', PolicyName='testInlinePolicy')['PolicyName']
+
+    # Delete it:
+    conn.delete_group_policy(GroupName='testGroup', PolicyName='testInlinePolicy')
+
+    # Verify it's deleted:
+    with assert_raises(ClientError):
+        conn.delete_group_policy(GroupName='testGroup', PolicyName='testInlinePolicy')
+
+
+@mock_iam()
+def test_delete_group():
+    conn = boto3.client('iam', region_name='us-east-1')
+
+    error_messages = [
+        'Cannot delete entity, must delete policies first.',
+        'Cannot delete entity, must remove users from group first.',
+        'Cannot delete entity, must detach all policies first.'
+    ]
+    messages_seen = set()
+
+    # Create the group:
+    conn.create_group(Path='/', GroupName='testGroup')
+
+    # Create an inline policy:
+    conn.put_group_policy(GroupName='testGroup',
+                          PolicyName='testInlinePolicy',
+                          PolicyDocument=json.dumps({
+                              "Version": "2012-10-17",
+                              "Statement": [
+                                  {
+                                      "Action": "s3:ListBucket",
+                                      "Resource": "*",
+                                      "Effect": "Allow",
+                                  }
+                              ]
+                          }))
+
+    # Create a user and attach it to the group:
+    conn.create_user(Path='/', UserName='testUser')
+    conn.add_user_to_group(GroupName='testGroup', UserName='testUser')
+
+    # Create a managed policy and attach it to the group:
+    mp_arn = conn.create_policy(
+        PolicyName='testPolicy',
+        Path='/',
+        PolicyDocument=json.dumps({
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Action": "s3:ListBucket",
+                    "Resource": "*",
+                    "Effect": "Allow",
+                }
+            ]
+        }),
+        Description='Test Policy'
+    )['Policy']['Arn']
+    conn.attach_group_policy(GroupName='testGroup', PolicyArn=mp_arn)
+
+    # Now, try to delete the group as is:
+    with assert_raises(ClientError) as ce:
+        conn.delete_group(GroupName='testGroup')
+    messages_seen.add(ce.exception.response['Error']['Message'])
+
+    # Remove the inline policy:
+    conn.delete_group_policy(GroupName='testGroup', PolicyName='testInlinePolicy')
+
+    # Try again:
+    with assert_raises(ClientError) as ce:
+        conn.delete_group(GroupName='testGroup')
+    messages_seen.add(ce.exception.response['Error']['Message'])
+
+    # Detach the managed policy:
+    conn.detach_group_policy(GroupName='testGroup', PolicyArn=mp_arn)
+
+    # Try again:
+    with assert_raises(ClientError) as ce:
+        conn.delete_group(GroupName='testGroup')
+    messages_seen.add(ce.exception.response['Error']['Message'])
+
+    # TODO delete the group user

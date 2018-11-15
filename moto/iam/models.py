@@ -299,6 +299,12 @@ class Group(BaseModel):
     def list_policies(self):
         return self.policies.keys()
 
+    def delete_policy(self, policy_name):
+        try:
+            del self.policies[policy_name]
+        except KeyError:
+            raise IAMNotFoundException("Policy {0} not found.".format(policy_name))
+
 
 class User(BaseModel):
 
@@ -753,6 +759,25 @@ class IAMBackend(BaseBackend):
     def get_group_policy(self, group_name, policy_name):
         group = self.get_group(group_name)
         return group.get_policy(policy_name)
+
+    def delete_group_policy(self, group_name, policy_name):
+        group = self.get_group(group_name)
+        group.delete_policy(policy_name)
+
+    def delete_group(self, group_name):
+        group = self.get_group(group_name)
+
+        # Can't delete a group if it has policies:
+        if len(group.policies):
+            raise IAMConflictException("DeleteConflict", "Cannot delete entity, must delete policies first.")
+
+        if len(group.users):
+            raise IAMConflictException("DeleteConflict", "Cannot delete entity, must remove users from group first.")
+
+        if len(group.managed_policies):
+            raise IAMConflictException("DeleteConflict", "Cannot delete entity, must detach all policies first.")
+
+        del self.groups[group_name]
 
     def create_user(self, user_name, path='/'):
         if user_name in self.users:

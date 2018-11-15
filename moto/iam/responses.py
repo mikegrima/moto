@@ -336,6 +336,20 @@ class IamResponse(BaseResponse):
         template = self.response_template(GET_GROUP_POLICY_TEMPLATE)
         return template.render(name="GetGroupPolicyResponse", **policy_result)
 
+    def delete_group(self):
+        role_name = self._get_param('GroupName')
+        iam_backend.delete_group(role_name)
+        template = self.response_template(GENERIC_EMPTY_TEMPLATE)
+        return template.render(name="DeleteGroupResponse")
+
+    def delete_group_policy(self):
+        group_name = self._get_param('GroupName')
+        policy_name = self._get_param('PolicyName')
+
+        iam_backend.delete_group_policy(group_name, policy_name)
+        template = self.response_template(GENERIC_EMPTY_TEMPLATE)
+        return template.render(name='DeleteGroupPolicy')
+
     def create_user(self):
         user_name = self._get_param('UserName')
         path = self._get_param('Path')
